@@ -28,42 +28,41 @@ def fetch_all_games():
         time.sleep(2)
     return all_urls
 
-def scrape_game(url):
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        page.goto(url, wait_until="networkidle", timeout=30000)
+def scrape_game(browser, url):
+    page = browser.new_page()
+    page.goto(url, wait_until="domcontentloaded", timeout=30000)
+    page.wait_for_timeout(2000)
 
-        # Titre
-        title_el = page.query_selector("meta[property='og:title']")
-        title_text = title_el.get_attribute("content") if title_el else page.title()
+    # Titre
+    title_el = page.query_selector("meta[property='og:title']")
+    title_text = title_el.get_attribute("content") if title_el else page.title()
 
-        # Magnet
-        magnet_href = None
-        magnet_el = page.query_selector("a[href^='magnet:']")
-        if magnet_el:
-            magnet_href = magnet_el.get_attribute("href")
+    # Magnet
+    magnet_href = None
+    magnet_el = page.query_selector("a[href^='magnet:']")
+    if magnet_el:
+        magnet_href = magnet_el.get_attribute("href")
+    else:
+        input_el = page.query_selector("input[value^='magnet:']")
+        if input_el:
+            magnet_href = input_el.get_attribute("value")
         else:
-            input_el = page.query_selector("input[value^='magnet:']")
-            if input_el:
-                magnet_href = input_el.get_attribute("value")
-            else:
-                body = page.inner_text("body")
-                m = re.search(r'magnet:\?xt=urn:btih:[a-f0-9]+[^"\'<>\s]*', body)
-                if m:
-                    magnet_href = m.group(0)
+            body = page.inner_text("body")
+            m = re.search(r'magnet:\?xt=urn:btih:[a-f0-9]+[^"\'<>\s]*', body)
+            if m:
+                magnet_href = m.group(0)
 
-        # Taille
-        size_text = "Unknown"
-        size_el = page.query_selector(".file-size, .size, [class*='size']")
-        if size_el:
-            size_text = size_el.inner_text().strip()
+    # Taille
+    size_text = "Unknown"
+    size_el = page.query_selector(".file-size, .size, [class*='size']")
+    if size_el:
+        size_text = size_el.inner_text().strip()
 
-        # Date
-        date_el = page.query_selector("time, .date, [class*='date']")
-        date_text = date_el.inner_text().strip() if date_el else datetime.utcnow().strftime("%Y-%m-%d")
+    # Date
+    date_el = page.query_selector("time, .date, [class*='date']")
+    date_text = date_el.inner_text().strip() if date_el else datetime.utcnow().strftime("%Y-%m-%d")
 
-        browser.close()
+    page.close()
 
     if not magnet_href:
         return None
@@ -76,7 +75,7 @@ def scrape_game(url):
     }
 
 def main():
-    # Charge l'ancien source.json (scraping incrémental)
+    # Scraping incrémental
     try:
         with open("source.json", "r") as f:
             old = json.load(f)
@@ -89,21 +88,24 @@ def main():
     new_urls = [u for u in urls if u not in old_urls]
     print(f"Found {len(urls)} games, {len(new_urls)} new")
 
-    # Scrape uniquement les nouveaux
     new_downloads = []
     if new_urls:
-        with ThreadPoolExecutor(max_workers=3) as pool:
-            futures = {pool.submit(scrape_game, u): u for u in new_urls}
-            for i, fut in enumerate(as_completed(futures)):
-                try:
-                    d = fut.result()
-                    if d:
-                        new_downloads.append(d)
-                    print(f"  [{i+1}/{len(new_urls)}] ✓")
-                except Exception as e:
-                    print(f"  [{i+1}/{len(new_urls)}] ✗ {e}")
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
 
-    # Fusionne ancien + nouveau
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                futures = {pool.submit(scrape_game, browser, u): u for u in new_urls}
+                for i, fut in enumerate(as_completed(futures)):
+                    try:
+                        d = fut.result()
+                        if d:
+                            new_downloads.append(d)
+                        print(f"  [{i+1}/{len(new_urls)}] ✓")
+                    except Exception as e:
+                        print(f"  [{i+1}/{len(new_urls)}] ✗ {e}")
+
+            browser.close()
+
     all_downloads = (old["downloads"] if old else []) + new_downloads
 
     with open("source.json", "w", encoding="utf-8") as f:

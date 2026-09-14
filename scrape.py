@@ -16,7 +16,7 @@ def fetch_all_games():
         if resp.status_code != 200:
             break
         soup = BeautifulSoup(resp.text, "html.parser")
-        links = soup.select("a.game-link")  # ← adapte ce sélecteur
+        links = soup.select("div#entry-pic a")
         if not links:
             break
         all_urls.extend([a["href"] for a in links])

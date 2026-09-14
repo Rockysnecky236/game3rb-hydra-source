@@ -1,5 +1,8 @@
 name: Auto-Update Source
 
+permissions:
+  contents: write
+
 on:
   schedule:
     - cron: '0 */12 * * *'
